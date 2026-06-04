@@ -10,12 +10,21 @@ local LocalPlayer = Players.LocalPlayer
 local TEXTURE_AVATAR_ID = "rbxassetid://95756254163657"
 local ICON_BUTTON_ID = "rbxassetid://130801048432319"
 
-if CoreGui:FindFirstChild("HumanoidStatusGUI") then CoreGui.HumanoidStatusGUI:Destroy() end
+-- Gerenciamento de persistência global para persistir o efeito após destruir a GUI
+if not CoreGui:GetAttribute("AntiSitInitialized") then
+    CoreGui:SetAttribute("AntiSitInitialized", true)
+    CoreGui:SetAttribute("GlobalAntiSitActive", false)
+end
+
+-- Limpa apenas a interface visual antiga se ela já existir
+if CoreGui:FindFirstChild("HumanoidStatusGUI") then 
+    CoreGui.HumanoidStatusGUI:Destroy() 
+end
 
 -- =======================================================================
 -- GERENCIAMENTO DE ESTADOS (ANTI-LAG & ANTI-SIT)
 -- =======================================================================
-local antiLagActive, antiSitActive = false, false
+local antiLagActive = false
 local antiSitConnections = {}
 
 local ItensDaBomba = { ["Bomb"] = true, ["NukeBomb1"] = true, ["NukeBomb2"] = true, ["sire1"] = true, ["Fire"] = true }
@@ -69,7 +78,7 @@ local function activateAntiSit()
         if humanoid.Sit then humanoid.Sit = false humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) end
         humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
         table.insert(antiSitConnections, humanoid.StateChanged:Connect(function(_, newState)
-            if newState == Enum.HumanoidStateType.Seated then
+            if newState == Enum.HumanoidStateType.Seated and CoreGui:GetAttribute("GlobalAntiSitActive") then
                 humanoid.Sit = false humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
             end
         end))
@@ -78,12 +87,31 @@ local function activateAntiSit()
     if LocalPlayer.Character then preventSitting(LocalPlayer.Character:FindFirstChildOfClass("Humanoid")) end
 end
 
+-- Monitoramento contínuo baseado no Atributo Global
 RunService.Heartbeat:Connect(function()
-    if antiSitActive then
+    if CoreGui:GetAttribute("GlobalAntiSitActive") then
         local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-        if hum then hum:SetStateEnabled(Enum.HumanoidStateType.Seated, false) hum.Sit = false end
+        if hum then 
+            hum:SetStateEnabled(Enum.HumanoidStateType.Seated, false) 
+            if hum.Sit then hum.Sit = false end 
+        end
     end
 end)
+
+-- Listener para escutar alterações de ativação/desativação externas
+CoreGui:GetAttributeChangedSignal("GlobalAntiSitActive"):Connect(function()
+    local atual = CoreGui:GetAttribute("GlobalAntiSitActive")
+    if atual then
+        activateAntiSit()
+    else
+        resetSitting()
+    end
+end)
+
+-- Sincroniza o estado atual caso o script seja re-executado com a função ligada
+if CoreGui:GetAttribute("GlobalAntiSitActive") then
+    activateAntiSit()
+end
 
 -- =======================================================================
 -- CONSTRUÇÃO DA INTERFACE GRÁFICA (OTIMIZADA)
@@ -94,7 +122,6 @@ ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.Parent = CoreGui
 
--- Função auxiliar para criação rápida de instâncias
 local function create(className, properties)
     local inst = Instance.new(className)
     for k, v in pairs(properties) do inst[k] = v end
@@ -120,7 +147,11 @@ local function criarBotaoMenu(nome, texto, ordem, bloqueado)
 end
 
 local BtnAntiLag = criarBotaoMenu("BtnAntiLag", "Anti Lag (OFF)", 1, false)
-local BtnAntiSit = criarBotaoMenu("BtnAntiSit", "Anti Sit (Off)", 2, false)
+
+-- Carrega o texto inicial baseado no estado global real do Anti Sit
+local estadoInicialAntiSit = CoreGui:GetAttribute("GlobalAntiSitActive")
+local BtnAntiSit = criarBotaoMenu("BtnAntiSit", estadoInicialAntiSit and "Anti Sit (On)" or "Anti Sit (Off)", 2, false)
+
 criarBotaoMenu("BtnAntiCol", "Anti Colisão", 3, true)
 criarBotaoMenu("BtnNoclip", "Noclip", 4, true)
 criarBotaoMenu("BtnFreeze", "Freeze", 5, true)
@@ -156,7 +187,7 @@ end
 habilitarArrasto(MainFrameBorder)
 
 -- =======================================================================
--- SISTEMA DO BOTÃO NINJA (ABRIR, FECHAR E SELEÇÃO)
+-- SISTEMA DO BOTÃO NINJA (ABRIR, FECHAR E DESATIVAÇÃO COMPLETA)
 -- =======================================================================
 local draggingIcon, dragStartPos, startIconPos, lastClickTime = false, nil, nil, 0
 
@@ -165,7 +196,10 @@ OpenCloseIcon.InputBegan:Connect(function(input)
         draggingIcon, dragStartPos, startIconPos = true, input.Position, OpenCloseIcon.Position
         local currentTime = tick()
         if (currentTime - lastClickTime) < 0.35 then
-            resetSitting() antiLagActive = false ScreenGui:Destroy() return
+            -- Dois cliques rápidos removem APENAS a interface, mantendo os efeitos ativos conforme solicitado
+            antiLagActive = false 
+            ScreenGui:Destroy() 
+            return
         end
         lastClickTime = currentTime
     end
@@ -194,9 +228,9 @@ BtnAntiLag.MouseButton1Click:Connect(function()
 end)
 
 BtnAntiSit.MouseButton1Click:Connect(function()
-    antiSitActive = not antiSitActive
-    BtnAntiSit.Text = antiSitActive and "Anti Sit (On)" or "Anti Sit (Off)"
-    if antiSitActive then activateAntiSit() else resetSitting() end
+    local novoEstado = not CoreGui:GetAttribute("GlobalAntiSitActive")
+    CoreGui:SetAttribute("GlobalAntiSitActive", novoEstado)
+    BtnAntiSit.Text = novoEstado and "Anti Sit (On)" or "Anti Sit (Off)"
 end)
 
 BtnClose.MouseButton1Click:Connect(function() MainFrameBorder.Visible = false end)
