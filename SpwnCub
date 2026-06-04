@@ -1,0 +1,202 @@
+-- =======================================================================
+-- SPWNCUB V1 STATUS HUMANOID VIEW 
+-- =======================================================================
+local UserInputService = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+
+local TEXTURE_AVATAR_ID = "rbxassetid://95756254163657"
+local ICON_BUTTON_ID = "rbxassetid://130801048432319"
+
+if CoreGui:FindFirstChild("HumanoidStatusGUI") then CoreGui.HumanoidStatusGUI:Destroy() end
+
+-- =======================================================================
+-- GERENCIAMENTO DE ESTADOS (ANTI-LAG & ANTI-SIT)
+-- =======================================================================
+local antiLagActive, antiSitActive = false, false
+local antiSitConnections = {}
+
+local ItensDaBomba = { ["Bomb"] = true, ["NukeBomb1"] = true, ["NukeBomb2"] = true, ["sire1"] = true, ["Fire"] = true }
+local ClassesDoLag = { ["Sound"] = true, ["ParticleEmitter"] = true, ["Explosion"] = true }
+
+local function neutralizarBomba(objeto)
+    if not objeto or not objeto.Parent or (LocalPlayer.Character and objeto:IsDescendantOf(LocalPlayer.Character)) then return end
+    local nome, classe = objeto.Name, objeto.ClassName
+
+    if ItensDaBomba[nome] then
+        if objeto:IsA("BasePart") and nome ~= "Fire" then
+            objeto.Transparency, objeto.CanCollide, objeto.Size = 1, false, Vector3.zero
+        elseif ClassesDoLag[classe] or nome == "Fire" or nome == "sire1" then
+            if objeto:IsA("Sound") then objeto.Volume = 0 objeto:Stop() end
+            objeto:Destroy()
+        end
+    elseif ClassesDoLag[classe] and (objeto.Parent.Name == "Handle" or ItensDaBomba[objeto.Parent.Name]) then
+        if objeto:IsA("Sound") then objeto.Volume = 0 objeto:Stop() end
+        objeto:Destroy()
+    end
+end
+
+workspace.DescendantAdded:Connect(function(desc) if antiLagActive then neutralizarBomba(desc) end end)
+
+task.spawn(function()
+    while task.wait(0.2) do
+        if antiLagActive then
+            for _, obj in ipairs(workspace:GetDescendants()) do neutralizarBomba(obj) end
+            for _, jogador in ipairs(Players:GetPlayers()) do
+                if jogador ~= LocalPlayer and jogador.Character then
+                    for _, ferramenta in ipairs(jogador.Character:GetChildren()) do
+                        if ferramenta:IsA("Tool") and ItensDaBomba[ferramenta.Name] then neutralizarBomba(ferramenta) end
+                    end
+                end
+            end
+        end
+    end
+end)
+
+local function resetSitting()
+    for _, conn in ipairs(antiSitConnections) do if conn and conn.Connected then conn:Disconnect() end end
+    antiSitConnections = {}
+    local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    if hum then hum:SetStateEnabled(Enum.HumanoidStateType.Seated, true) end
+end
+
+local function activateAntiSit()
+    resetSitting()
+    local function preventSitting(humanoid)
+        if not humanoid then return end
+        if humanoid.Sit then humanoid.Sit = false humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) end
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
+        table.insert(antiSitConnections, humanoid.StateChanged:Connect(function(_, newState)
+            if newState == Enum.HumanoidStateType.Seated then
+                humanoid.Sit = false humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+            end
+        end))
+    end
+    table.insert(antiSitConnections, LocalPlayer.CharacterAdded:Connect(function(char) preventSitting(char:WaitForChild("Humanoid")) end))
+    if LocalPlayer.Character then preventSitting(LocalPlayer.Character:FindFirstChildOfClass("Humanoid")) end
+end
+
+RunService.Heartbeat:Connect(function()
+    if antiSitActive then
+        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum then hum:SetStateEnabled(Enum.HumanoidStateType.Seated, false) hum.Sit = false end
+    end
+end)
+
+-- =======================================================================
+-- CONSTRUÇÃO DA INTERFACE GRÁFICA (OTIMIZADA)
+-- =======================================================================
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "HumanoidStatusGUI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = CoreGui
+
+-- Função auxiliar para criação rápida de instâncias
+local function create(className, properties)
+    local inst = Instance.new(className)
+    for k, v in pairs(properties) do inst[k] = v end
+    return inst
+end
+
+local MainFrameBorder = create("Frame", {Name = "MainFrameBorder", Size = UDim2.fromOffset(265, 310), Position = UDim2.new(0.5, -132, 0.5, -155), BackgroundColor3 = Color3.fromRGB(255, 255, 255), BorderSizePixel = 0, Active = true, Parent = ScreenGui})
+local MainFrame = create("Frame", {Name = "MainFrame", Size = UDim2.new(1, -6, 1, -6), Position = UDim2.fromOffset(3, 3), BackgroundColor3 = Color3.fromRGB(0, 0, 0), BorderSizePixel = 0, ZIndex = 2, Parent = MainFrameBorder})
+create("TextLabel", {Name = "TitleLabel", Size = UDim2.new(1, 0, 0, 35), Position = UDim2.fromOffset(0, 8), BackgroundTransparency = 1, Text = "Humanoid Status VIEW", TextColor3 = Color3.fromRGB(255, 255, 255), Font = Enum.Font.SpecialElite, TextSize = 19, ZIndex = 3, Parent = MainFrame})
+create("ImageLabel", {Name = "AvatarImage", Size = UDim2.fromOffset(105, 175), Position = UDim2.fromOffset(140, 55), BackgroundTransparency = 1, Image = TEXTURE_AVATAR_ID, ZIndex = 3, Parent = MainFrame})
+create("Frame", {Name = "Divider", Size = UDim2.fromOffset(2, 175), Position = UDim2.fromOffset(131, 55), BackgroundColor3 = Color3.fromRGB(255, 255, 255), BorderSizePixel = 0, ZIndex = 3, Parent = MainFrame})
+
+local ButtonContainer = create("Frame", {Name = "ButtonContainer", Size = UDim2.fromOffset(115, 175), Position = UDim2.fromOffset(12, 55), BackgroundTransparency = 1, ZIndex = 3, Parent = MainFrame})
+create("UIListLayout", {Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = ButtonContainer})
+
+local function criarBotaoMenu(nome, texto, ordem, bloqueado)
+    return create("TextButton", {
+        Name = nome, Size = UDim2.new(1, 0, 0, 30), BorderSizePixel = 0, Text = texto, Font = Enum.Font.SourceSansBold, TextSize = 14, LayoutOrder = ordem, ZIndex = 4,
+        BackgroundColor3 = bloqueado and Color3.fromRGB(24, 24, 24) or Color3.fromRGB(45, 45, 45),
+        TextColor3 = bloqueado and Color3.fromRGB(90, 90, 90) or Color3.fromRGB(255, 255, 255),
+        AutoButtonColor = not bloqueado, Parent = ButtonContainer
+    })
+end
+
+local BtnAntiLag = criarBotaoMenu("BtnAntiLag", "Anti Lag (OFF)", 1, false)
+local BtnAntiSit = criarBotaoMenu("BtnAntiSit", "Anti Sit (Off)", 2, false)
+criarBotaoMenu("BtnAntiCol", "Anti Colisão", 3, true)
+criarBotaoMenu("BtnNoclip", "Noclip", 4, true)
+criarBotaoMenu("BtnFreeze", "Freeze", 5, true)
+
+local BottomBar = create("Frame", {Name = "BottomBar", Size = UDim2.new(1, 0, 0, 55), Position = UDim2.new(0, 0, 1, -55), BackgroundColor3 = Color3.fromRGB(20, 20, 20), BorderSizePixel = 0, ZIndex = 3, Parent = MainFrame})
+local BtnClose = create("TextButton", {Name = "BtnClose", Size = UDim2.fromOffset(130, 30), Position = UDim2.new(0.5, -65, 0.5, -15), BackgroundColor3 = Color3.fromRGB(38, 38, 38), BorderSizePixel = 0, Text = "Close", TextColor3 = Color3.fromRGB(255, 255, 255), Font = Enum.Font.SourceSansBold, TextSize = 18, ZIndex = 4, Parent = BottomBar})
+create("UICorner", {CornerRadius = UDim.new(0, 5), Parent = BtnClose})
+
+local OpenCloseIcon = create("ImageButton", {Name = "OpenCloseIcon", Size = UDim2.fromOffset(70, 70), Position = UDim2.fromOffset(125, 4), BackgroundTransparency = 1, BorderSizePixel = 0, Image = ICON_BUTTON_ID, ZIndex = 12, Active = true, Parent = ScreenGui})
+
+-- =======================================================================
+-- FUNÇÃO AUXILIAR DE ARRASTE (DRAG) UNIFICADA
+-- =======================================================================
+local function habilitarArrasto(frame)
+    local dragging, dragInput, dragStart, startPos
+    frame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging, dragStart, startPos = true, input.Position, frame.Position
+            input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
+        end
+    end)
+    frame.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then dragInput = input end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - dragStart
+            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+end
+
+habilitarArrasto(MainFrameBorder)
+
+-- =======================================================================
+-- SISTEMA DO BOTÃO NINJA (ABRIR, FECHAR E SELEÇÃO)
+-- =======================================================================
+local draggingIcon, dragStartPos, startIconPos, lastClickTime = false, nil, nil, 0
+
+OpenCloseIcon.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        draggingIcon, dragStartPos, startIconPos = true, input.Position, OpenCloseIcon.Position
+        local currentTime = tick()
+        if (currentTime - lastClickTime) < 0.35 then
+            resetSitting() antiLagActive = false ScreenGui:Destroy() return
+        end
+        lastClickTime = currentTime
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if draggingIcon and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - dragStartPos
+        OpenCloseIcon.Position = UDim2.new(startIconPos.X.Scale, startIconPos.X.Offset + delta.X, startIconPos.Y.Scale, startIconPos.Y.Offset + delta.Y)
+    end
+end)
+
+OpenCloseIcon.InputEnded:Connect(function(input)
+    if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) and draggingIcon then
+        draggingIcon = false
+        if (input.Position - dragStartPos).Magnitude < 5 then MainFrameBorder.Visible = not MainFrameBorder.Visible end
+    end
+end)
+
+-- =======================================================================
+-- LÓGICA DOS BOTÕES
+-- =======================================================================
+BtnAntiLag.MouseButton1Click:Connect(function()
+    antiLagActive = not antiLagActive
+    BtnAntiLag.Text = antiLagActive and "Anti Lag (ON)" or "Anti Lag (OFF)"
+end)
+
+BtnAntiSit.MouseButton1Click:Connect(function()
+    antiSitActive = not antiSitActive
+    BtnAntiSit.Text = antiSitActive and "Anti Sit (On)" or "Anti Sit (Off)"
+    if antiSitActive then activateAntiSit() else resetSitting() end
+end)
+
+BtnClose.MouseButton1Click:Connect(function() MainFrameBorder.Visible = false end)
