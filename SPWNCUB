@@ -10,10 +10,12 @@ local LocalPlayer = Players.LocalPlayer
 local TEXTURE_AVATAR_ID = "rbxassetid://95756254163657"
 local ICON_BUTTON_ID = "rbxassetid://130801048432319"
 
--- Gerenciamento de persistência global para persistir o efeito após destruir a GUI
+-- Gerenciamento de persistência global para manter os efeitos ativos em segundo plano
 if not CoreGui:GetAttribute("AntiSitInitialized") then
     CoreGui:SetAttribute("AntiSitInitialized", true)
     CoreGui:SetAttribute("GlobalAntiSitActive", false)
+    CoreGui:SetAttribute("GlobalClickActive", false)
+    CoreGui:SetAttribute("GlobalAntiLagActive", false) -- Novo estado persistente para o Anti-Lag Bomb
 end
 
 -- Limpa apenas a interface visual antiga se ela já existir
@@ -22,47 +24,9 @@ if CoreGui:FindFirstChild("HumanoidStatusGUI") then
 end
 
 -- =======================================================================
--- GERENCIAMENTO DE ESTADOS (ANTI-LAG & ANTI-SIT)
+-- GERENCIAMENTO DE ESTADOS (ANTI-SIT PERSISTENTE)
 -- =======================================================================
-local antiLagActive = false
 local antiSitConnections = {}
-
-local ItensDaBomba = { ["Bomb"] = true, ["NukeBomb1"] = true, ["NukeBomb2"] = true, ["sire1"] = true, ["Fire"] = true }
-local ClassesDoLag = { ["Sound"] = true, ["ParticleEmitter"] = true, ["Explosion"] = true }
-
-local function neutralizarBomba(objeto)
-    if not objeto or not objeto.Parent or (LocalPlayer.Character and objeto:IsDescendantOf(LocalPlayer.Character)) then return end
-    local nome, classe = objeto.Name, objeto.ClassName
-
-    if ItensDaBomba[nome] then
-        if objeto:IsA("BasePart") and nome ~= "Fire" then
-            objeto.Transparency, objeto.CanCollide, objeto.Size = 1, false, Vector3.zero
-        elseif ClassesDoLag[classe] or nome == "Fire" or nome == "sire1" then
-            if objeto:IsA("Sound") then objeto.Volume = 0 objeto:Stop() end
-            objeto:Destroy()
-        end
-    elseif ClassesDoLag[classe] and (objeto.Parent.Name == "Handle" or ItensDaBomba[objeto.Parent.Name]) then
-        if objeto:IsA("Sound") then objeto.Volume = 0 objeto:Stop() end
-        objeto:Destroy()
-    end
-end
-
-workspace.DescendantAdded:Connect(function(desc) if antiLagActive then neutralizarBomba(desc) end end)
-
-task.spawn(function()
-    while task.wait(0.2) do
-        if antiLagActive then
-            for _, obj in ipairs(workspace:GetDescendants()) do neutralizarBomba(obj) end
-            for _, jogador in ipairs(Players:GetPlayers()) do
-                if jogador ~= LocalPlayer and jogador.Character then
-                    for _, ferramenta in ipairs(jogador.Character:GetChildren()) do
-                        if ferramenta:IsA("Tool") and ItensDaBomba[ferramenta.Name] then neutralizarBomba(ferramenta) end
-                    end
-                end
-            end
-        end
-    end
-end)
 
 local function resetSitting()
     for _, conn in ipairs(antiSitConnections) do if conn and conn.Connected then conn:Disconnect() end end
@@ -87,7 +51,6 @@ local function activateAntiSit()
     if LocalPlayer.Character then preventSitting(LocalPlayer.Character:FindFirstChildOfClass("Humanoid")) end
 end
 
--- Monitoramento contínuo baseado no Atributo Global
 RunService.Heartbeat:Connect(function()
     if CoreGui:GetAttribute("GlobalAntiSitActive") then
         local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
@@ -98,23 +61,102 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
--- Listener para escutar alterações de ativação/desativação externas
 CoreGui:GetAttributeChangedSignal("GlobalAntiSitActive"):Connect(function()
-    local atual = CoreGui:GetAttribute("GlobalAntiSitActive")
-    if atual then
-        activateAntiSit()
-    else
-        resetSitting()
-    end
+    if CoreGui:GetAttribute("GlobalAntiSitActive") then activateAntiSit() else resetSitting() end
 end)
 
--- Sincroniza o estado atual caso o script seja re-executado com a função ligada
-if CoreGui:GetAttribute("GlobalAntiSitActive") then
-    activateAntiSit()
-end
+if CoreGui:GetAttribute("GlobalAntiSitActive") then activateAntiSit() end
 
 -- =======================================================================
--- CONSTRUÇÃO DA INTERFACE GRÁFICA (OTIMIZADA)
+-- LÓGICA DO ANTI-LAG BOMB (OTIMIZADA ESTILO BANANA - SEM LOOPS DE TRAVAMENTO)
+-- =======================================================================
+local ItensDaBomba = { ["Bomb"] = true, ["NukeBomb1"] = true, ["NukeBomb2"] = true, ["sire1"] = true, ["Fire"] = true }
+local ClassesDoLag = { ["Sound"] = true, ["ParticleEmitter"] = true, ["Explosion"] = true }
+
+local function neutralizarBomba(objeto)
+    if not CoreGui:GetAttribute("GlobalAntiLagActive") or not objeto or not objeto.Parent then return end
+    if LocalPlayer.Character and objeto:IsDescendantOf(LocalPlayer.Character) then return end
+
+    local nome, classe = objeto.Name, objeto.ClassName
+
+    -- Abordagem Baseada em Eventos Nativo: Deleta o TouchInterest ou silencia elementos sem loops contínuos
+    if ItensDaBomba[nome] or ClassesDoLag[classe] then
+        -- Se possuir um gatilho de toque/ativação de servidor, destrói instantaneamente (Igual ao da banana)
+        local touchInterest = objeto:FindFirstChildOfClass("TouchInterest")
+        if touchInterest then touchInterest:Destroy() end
+
+        if objeto:IsA("BasePart") and nome ~= "Fire" then
+            objeto.Transparency, objeto.CanCollide, objeto.Size = 1, false, Vector3.zero
+        elseif ClassesDoLag[classe] or nome == "Fire" or nome == "sire1" then
+            if objeto:IsA("Sound") then objeto.Volume = 0 objeto:Stop() end
+            pcall(function() objeto:Destroy() end)
+        end
+    end
+end
+
+-- Monitoramento puramente passivo e em tempo real (Evita processamento e lag)
+workspace.DescendantAdded:Connect(neutralizarBomba)
+
+local function aplicarAntiLagInicial()
+    if CoreGui:GetAttribute("GlobalAntiLagActive") then
+        local descendants = workspace:GetDescendants()
+        for i = 1, #descendants do
+            neutralizarBomba(descendants[i])
+        end
+    end
+end
+
+CoreGui:GetAttributeChangedSignal("GlobalAntiLagActive"):Connect(aplicarAntiLagInicial)
+if CoreGui:GetAttribute("GlobalAntiLagActive") then task.spawn(aplicarAntiLagInicial) end
+
+-- =======================================================================
+-- LÓGICA DO ALCANCE INFINITO PERSISTENTE (CLICK 1E30)
+-- =======================================================================
+local DISTANCIA_DESPERTADA = math.huge
+local clickConnection = nil
+
+local function expandirBotoesExistentes(estado)
+    local distancia = estado and DISTANCIA_DESPERTADA or 32
+    for _, objeto in pairs(workspace:GetDescendants()) do
+        if objeto:IsA("ClickDetector") or objeto:IsA("ProximityPrompt") then
+            objeto.MaxActivationDistance = distancia
+        end
+    end
+end
+
+local function gerenciarClick1e30()
+    local ativo = CoreGui:GetAttribute("GlobalClickActive")
+    if clickConnection then clickConnection:Disconnect() clickConnection = nil end
+    
+    if ativo then
+        expandirBotoesExistentes(true)
+        clickConnection = workspace.DescendantAdded:Connect(function(objeto)
+            if objeto:IsA("ClickDetector") or objeto:IsA("ProximityPrompt") then
+                objeto.MaxActivationDistance = DISTANCIA_DESPERTADA
+            end
+        end)
+        
+        if sethp then
+            task.spawn(function()
+                while CoreGui:GetAttribute("GlobalClickActive") do
+                    pcall(function()
+                        sethp(LocalPlayer, "SimulationRadius", 1e30)
+                        sethp(LocalPlayer, "MaxSimulationRadius", 1e30)
+                    end)
+                    RunService.RenderStepped:Wait()
+                end
+            end)
+        end
+    else
+        expandirBotoesExistentes(false)
+    end
+end
+
+CoreGui:GetAttributeChangedSignal("GlobalClickActive"):Connect(gerenciarClick1e30)
+if CoreGui:GetAttribute("GlobalClickActive") then task.spawn(gerenciarClick1e30) end
+
+-- =======================================================================
+-- CONSTRUÇÃO DA INTERFACE GRÁFICA (OTIMIZADA COM SCROLLING)
 -- =======================================================================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "HumanoidStatusGUI"
@@ -132,29 +174,38 @@ local MainFrameBorder = create("Frame", {Name = "MainFrameBorder", Size = UDim2.
 local MainFrame = create("Frame", {Name = "MainFrame", Size = UDim2.new(1, -6, 1, -6), Position = UDim2.fromOffset(3, 3), BackgroundColor3 = Color3.fromRGB(0, 0, 0), BorderSizePixel = 0, ZIndex = 2, Parent = MainFrameBorder})
 create("TextLabel", {Name = "TitleLabel", Size = UDim2.new(1, 0, 0, 35), Position = UDim2.fromOffset(0, 8), BackgroundTransparency = 1, Text = "Humanoid Status VIEW", TextColor3 = Color3.fromRGB(255, 255, 255), Font = Enum.Font.SpecialElite, TextSize = 19, ZIndex = 3, Parent = MainFrame})
 create("ImageLabel", {Name = "AvatarImage", Size = UDim2.fromOffset(105, 175), Position = UDim2.fromOffset(140, 55), BackgroundTransparency = 1, Image = TEXTURE_AVATAR_ID, ZIndex = 3, Parent = MainFrame})
-create("Frame", {Name = "Divider", Size = UDim2.fromOffset(2, 175), Position = UDim2.fromOffset(131, 55), BackgroundColor3 = Color3.fromRGB(255, 255, 255), BorderSizePixel = 0, ZIndex = 3, Parent = MainFrame})
 
-local ButtonContainer = create("Frame", {Name = "ButtonContainer", Size = UDim2.fromOffset(115, 175), Position = UDim2.fromOffset(12, 55), BackgroundTransparency = 1, ZIndex = 3, Parent = MainFrame})
+-- Divisório Lateral/Sistema de Rolamento usando a linha branca nativa (ScrollBar)
+local ScrollContainer = create("ScrollingFrame", {
+    Name = "ScrollContainer", Size = UDim2.fromOffset(125, 175), Position = UDim2.fromOffset(8, 55),
+    BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
+    ScrollBarImageColor3 = Color3.fromRGB(255, 255, 255), CanvasSize = UDim2.new(0, 0, 0, 220), 
+    ZIndex = 3, Parent = MainFrame
+})
+
+local ButtonContainer = create("Frame", {Name = "ButtonContainer", Size = UDim2.new(1, -8, 1, 0), Position = UDim2.fromOffset(0, 0), BackgroundTransparency = 1, ZIndex = 3, Parent = ScrollContainer})
 create("UIListLayout", {Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = ButtonContainer})
 
+-- Função para criar botões com suporte ao visual adaptativo de bloqueado
 local function criarBotaoMenu(nome, texto, ordem, bloqueado)
-    return create("TextButton", {
+    local btn = create("TextButton", {
         Name = nome, Size = UDim2.new(1, 0, 0, 30), BorderSizePixel = 0, Text = texto, Font = Enum.Font.SourceSansBold, TextSize = 14, LayoutOrder = ordem, ZIndex = 4,
-        BackgroundColor3 = bloqueado and Color3.fromRGB(24, 24, 24) or Color3.fromRGB(45, 45, 45),
-        TextColor3 = bloqueado and Color3.fromRGB(90, 90, 90) or Color3.fromRGB(255, 255, 255),
+        BackgroundColor3 = bloqueado and Color3.fromRGB(24, 24, 24) or Color3.fromRGB(45, 45, 45), 
+        TextColor3 = bloqueado and Color3.fromRGB(90, 90, 90) or Color3.fromRGB(255, 255, 255), 
         AutoButtonColor = not bloqueado, Parent = ButtonContainer
     })
+    return btn
 end
 
-local BtnAntiLag = criarBotaoMenu("BtnAntiLag", "Anti Lag (OFF)", 1, false)
+-- Botões Atualizados e Sincronizados com Atributos Globais
+local BtnAntiLag = criarBotaoMenu("BtnAntiLag", CoreGui:GetAttribute("GlobalAntiLagActive") and "Anti Lag (ON)" or "Anti Lag (OFF)", 1, false)
+local BtnAntiSit = criarBotaoMenu("BtnAntiSit", CoreGui:GetAttribute("GlobalAntiSitActive") and "Anti Sit (On)" or "Anti Sit (Off)", 2, false)
+local BtnClick   = criarBotaoMenu("BtnClick", CoreGui:GetAttribute("GlobalClickActive") and "Click 1e30 (ON)" or "Click 1e30 (OFF)", 3, false)
 
--- Carrega o texto inicial baseado no estado global real do Anti Sit
-local estadoInicialAntiSit = CoreGui:GetAttribute("GlobalAntiSitActive")
-local BtnAntiSit = criarBotaoMenu("BtnAntiSit", estadoInicialAntiSit and "Anti Sit (On)" or "Anti Sit (Off)", 2, false)
-
-criarBotaoMenu("BtnAntiCol", "Anti Colisão", 3, true)
-criarBotaoMenu("BtnNoclip", "Noclip", 4, true)
-criarBotaoMenu("BtnFreeze", "Freeze", 5, true)
+-- DETALHE MANTIDO: Funções sem código voltam a exibir o visual nativo de bloqueado/desativado
+local BtnAntiCol = criarBotaoMenu("BtnAntiCol", "Anti Colisão", 4, true)
+local BtnNoclip  = criarBotaoMenu("BtnNoclip", "Noclip", 5, true)
+local BtnFreeze  = criarBotaoMenu("BtnFreeze", "Freeze", 6, true)
 
 local BottomBar = create("Frame", {Name = "BottomBar", Size = UDim2.new(1, 0, 0, 55), Position = UDim2.new(0, 0, 1, -55), BackgroundColor3 = Color3.fromRGB(20, 20, 20), BorderSizePixel = 0, ZIndex = 3, Parent = MainFrame})
 local BtnClose = create("TextButton", {Name = "BtnClose", Size = UDim2.fromOffset(130, 30), Position = UDim2.new(0.5, -65, 0.5, -15), BackgroundColor3 = Color3.fromRGB(38, 38, 38), BorderSizePixel = 0, Text = "Close", TextColor3 = Color3.fromRGB(255, 255, 255), Font = Enum.Font.SourceSansBold, TextSize = 18, ZIndex = 4, Parent = BottomBar})
@@ -187,7 +238,7 @@ end
 habilitarArrasto(MainFrameBorder)
 
 -- =======================================================================
--- SISTEMA DO BOTÃO NINJA (ABRIR, FECHAR E DESATIVAÇÃO COMPLETA)
+-- SISTEMA DO BOTÃO NINJA (ABRIR, FECHAR E SELEÇÃO)
 -- =======================================================================
 local draggingIcon, dragStartPos, startIconPos, lastClickTime = false, nil, nil, 0
 
@@ -196,8 +247,7 @@ OpenCloseIcon.InputBegan:Connect(function(input)
         draggingIcon, dragStartPos, startIconPos = true, input.Position, OpenCloseIcon.Position
         local currentTime = tick()
         if (currentTime - lastClickTime) < 0.35 then
-            -- Dois cliques rápidos removem APENAS a interface, mantendo os efeitos ativos conforme solicitado
-            antiLagActive = false 
+            -- Dois cliques rápidos fecham a UI visual, mantendo os ganchos ativos
             ScreenGui:Destroy() 
             return
         end
@@ -220,17 +270,24 @@ OpenCloseIcon.InputEnded:Connect(function(input)
 end)
 
 -- =======================================================================
--- LÓGICA DOS BOTÕES
+-- LÓGICA DE INTERAÇÃO DOS BOTÕES ATIVOS
 -- =======================================================================
 BtnAntiLag.MouseButton1Click:Connect(function()
-    antiLagActive = not antiLagActive
-    BtnAntiLag.Text = antiLagActive and "Anti Lag (ON)" or "Anti Lag (OFF)"
+    local novoEstado = not CoreGui:GetAttribute("GlobalAntiLagActive")
+    CoreGui:SetAttribute("GlobalAntiLagActive", novoEstado)
+    BtnAntiLag.Text = novoEstado and "Anti Lag (ON)" or "Anti Lag (OFF)"
 end)
 
 BtnAntiSit.MouseButton1Click:Connect(function()
     local novoEstado = not CoreGui:GetAttribute("GlobalAntiSitActive")
     CoreGui:SetAttribute("GlobalAntiSitActive", novoEstado)
     BtnAntiSit.Text = novoEstado and "Anti Sit (On)" or "Anti Sit (Off)"
+end)
+
+BtnClick.MouseButton1Click:Connect(function()
+    local novoEstado = not CoreGui:GetAttribute("GlobalClickActive")
+    CoreGui:SetAttribute("GlobalClickActive", novoEstado)
+    BtnClick.Text = novoEstado and "Click 1e30 (ON)" or "Click 1e30 (OFF)"
 end)
 
 BtnClose.MouseButton1Click:Connect(function() MainFrameBorder.Visible = false end)
