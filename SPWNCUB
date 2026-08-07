@@ -1,5 +1,5 @@
 -- =======================================================================
--- SPWNCUB V1 STATUS HUMANOID VIEW (UPDATED - ANTI COLISÃO CORRIGIDO)
+-- SPWNCUB V1 STATUS HUMANOID VIEW (UPDATED - SMART FREEZE COM 1S DE DELAY)
 -- =======================================================================
 local UserInputService = game:GetService("UserInputService")
 local CoreGui = game:GetService("CoreGui")
@@ -17,6 +17,7 @@ if not CoreGui:GetAttribute("AntiSitInitialized") then
     CoreGui:SetAttribute("GlobalClickActive", false)
     CoreGui:SetAttribute("GlobalAntiLagActive", false)
     CoreGui:SetAttribute("GlobalAntiCollisionActive", false)
+    CoreGui:SetAttribute("GlobalFreezeActive", false)
 end
 
 -- Limpa apenas a interface visual antiga se ela já existir
@@ -69,15 +70,59 @@ end)
 if CoreGui:GetAttribute("GlobalAntiSitActive") then activateAntiSit() end
 
 -- =======================================================================
--- LÓGICA DO ANTI-COLISÃO / ANTI-FLING PERSISTENTE (CORRIGIDA)
+-- LÓGICA DO SMART FREEZE (COM 1 SEGUNDO DE ESPERA APÓS PARAR)
 -- =======================================================================
-local antiCollisionData = {} -- Armazena a peça e o seu estado original exato de CanCollide
+local idleStartTime = nil
+
+RunService.Heartbeat:Connect(function()
+    if CoreGui:GetAttribute("GlobalFreezeActive") then
+        local char = LocalPlayer.Character
+        if char then
+            local rootPart = char:FindFirstChild("HumanoidRootPart")
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if rootPart and hum then
+                if hum.MoveDirection.Magnitude > 0 then
+                    -- Se estiver se movendo, destrava na hora e reseta o cronômetro
+                    if rootPart.Anchored then
+                        rootPart.Anchored = false
+                    end
+                    idleStartTime = nil
+                else
+                    -- Se parou de se mover, aguarda 1 segundo completo antes de ancorar
+                    if not rootPart.Anchored then
+                        if idleStartTime == nil then
+                            idleStartTime = os.clock()
+                        elseif (os.clock() - idleStartTime) >= 1.0 then
+                            rootPart.Anchored = true
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
+
+CoreGui:GetAttributeChangedSignal("GlobalFreezeActive"):Connect(function()
+    if not CoreGui:GetAttribute("GlobalFreezeActive") then
+        idleStartTime = nil
+        local char = LocalPlayer.Character
+        if char then
+            local rootPart = char:FindFirstChild("HumanoidRootPart")
+            if rootPart then rootPart.Anchored = false end
+        end
+    end
+end)
+
+-- =======================================================================
+-- LÓGICA DO ANTI-COLISÃO / ANTI-FLING PERSISTENTE
+-- =======================================================================
+local antiCollisionData = {} 
 local antiCollisionConnection = nil
 
 local function processarPartAntiColisao(part)
     if not CoreGui:GetAttribute("GlobalAntiCollisionActive") then return end
     if part:IsA("BasePart") and not part.Anchored and antiCollisionData[part] == nil then
-        antiCollisionData[part] = part.CanCollide -- Salva o estado original antes de alterar
+        antiCollisionData[part] = part.CanCollide 
         part.CanCollide = false
     end
 end
@@ -90,7 +135,7 @@ local function desativarAntiColisao()
     for part, originalCanCollide in pairs(antiCollisionData) do
         if part and part.Parent then
             pcall(function()
-                part.CanCollide = originalCanCollide -- Restaura o estado original exato da peça
+                part.CanCollide = originalCanCollide 
             end)
         end
     end
@@ -250,10 +295,10 @@ local BtnAntiLag = criarBotaoMenu("BtnAntiLag", CoreGui:GetAttribute("GlobalAnti
 local BtnAntiSit = criarBotaoMenu("BtnAntiSit", CoreGui:GetAttribute("GlobalAntiSitActive") and "Anti Sit (On)" or "Anti Sit (Off)", 2, false)
 local BtnClick   = criarBotaoMenu("BtnClick", CoreGui:GetAttribute("GlobalClickActive") and "Click 1e30 (ON)" or "Click 1e30 (OFF)", 3, false)
 local BtnAntiCol = criarBotaoMenu("BtnAntiCol", CoreGui:GetAttribute("GlobalAntiCollisionActive") and "Anti Colisão (ON)" or "Anti Colisão (OFF)", 4, false)
+local BtnFreeze  = criarBotaoMenu("BtnFreeze", CoreGui:GetAttribute("GlobalFreezeActive") and "Freeze (ON)" or "Freeze (OFF)", 5, false)
 
--- Funções sem código continuam desativadas/bloqueadas
-local BtnNoclip  = criarBotaoMenu("BtnNoclip", "Noclip", 5, true)
-local BtnFreeze  = criarBotaoMenu("BtnFreeze", "Freeze", 6, true)
+-- Função remanescente bloqueada
+local BtnNoclip  = criarBotaoMenu("BtnNoclip", "Noclip", 6, true)
 
 local BottomBar = create("Frame", {Name = "BottomBar", Size = UDim2.new(1, 0, 0, 55), Position = UDim2.new(0, 0, 1, -55), BackgroundColor3 = Color3.fromRGB(20, 20, 20), BorderSizePixel = 0, ZIndex = 3, Parent = MainFrame})
 local BtnClose = create("TextButton", {Name = "BtnClose", Size = UDim2.fromOffset(130, 30), Position = UDim2.new(0.5, -65, 0.5, -15), BackgroundColor3 = Color3.fromRGB(38, 38, 38), BorderSizePixel = 0, Text = "Close", TextColor3 = Color3.fromRGB(255, 255, 255), Font = Enum.Font.SourceSansBold, TextSize = 18, ZIndex = 4, Parent = BottomBar})
@@ -341,6 +386,12 @@ BtnAntiCol.MouseButton1Click:Connect(function()
     local novoEstado = not CoreGui:GetAttribute("GlobalAntiCollisionActive")
     CoreGui:SetAttribute("GlobalAntiCollisionActive", novoEstado)
     BtnAntiCol.Text = novoEstado and "Anti Colisão (ON)" or "Anti Colisão (OFF)"
+end)
+
+BtnFreeze.MouseButton1Click:Connect(function()
+    local novoEstado = not CoreGui:GetAttribute("GlobalFreezeActive")
+    CoreGui:SetAttribute("GlobalFreezeActive", novoEstado)
+    BtnFreeze.Text = novoEstado and "Freeze (ON)" or "Freeze (OFF)"
 end)
 
 BtnClose.MouseButton1Click:Connect(function() MainFrameBorder.Visible = false end)
