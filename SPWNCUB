@@ -1,5 +1,5 @@
 -- =======================================================================
--- SPWNCUB V1 STATUS HUMANOID VIEW 
+-- SPWNCUB V1 STATUS HUMANOID VIEW (UPDATED - ANTI COLISÃO CORRIGIDO)
 -- =======================================================================
 local UserInputService = game:GetService("UserInputService")
 local CoreGui = game:GetService("CoreGui")
@@ -15,7 +15,8 @@ if not CoreGui:GetAttribute("AntiSitInitialized") then
     CoreGui:SetAttribute("AntiSitInitialized", true)
     CoreGui:SetAttribute("GlobalAntiSitActive", false)
     CoreGui:SetAttribute("GlobalClickActive", false)
-    CoreGui:SetAttribute("GlobalAntiLagActive", false) -- Novo estado persistente para o Anti-Lag Bomb
+    CoreGui:SetAttribute("GlobalAntiLagActive", false)
+    CoreGui:SetAttribute("GlobalAntiCollisionActive", false)
 end
 
 -- Limpa apenas a interface visual antiga se ela já existir
@@ -68,6 +69,56 @@ end)
 if CoreGui:GetAttribute("GlobalAntiSitActive") then activateAntiSit() end
 
 -- =======================================================================
+-- LÓGICA DO ANTI-COLISÃO / ANTI-FLING PERSISTENTE (CORRIGIDA)
+-- =======================================================================
+local antiCollisionData = {} -- Armazena a peça e o seu estado original exato de CanCollide
+local antiCollisionConnection = nil
+
+local function processarPartAntiColisao(part)
+    if not CoreGui:GetAttribute("GlobalAntiCollisionActive") then return end
+    if part:IsA("BasePart") and not part.Anchored and antiCollisionData[part] == nil then
+        antiCollisionData[part] = part.CanCollide -- Salva o estado original antes de alterar
+        part.CanCollide = false
+    end
+end
+
+local function desativarAntiColisao()
+    if antiCollisionConnection then
+        antiCollisionConnection:Disconnect()
+        antiCollisionConnection = nil
+    end
+    for part, originalCanCollide in pairs(antiCollisionData) do
+        if part and part.Parent then
+            pcall(function()
+                part.CanCollide = originalCanCollide -- Restaura o estado original exato da peça
+            end)
+        end
+    end
+    antiCollisionData = {}
+end
+
+local function ativarAntiColisao()
+    desativarAntiColisao()
+    for _, objeto in ipairs(workspace:GetDescendants()) do
+        processarPartAntiColisao(objeto)
+    end
+    antiCollisionConnection = workspace.DescendantAdded:Connect(function(objeto)
+        processarPartAntiColisao(objeto)
+    end)
+end
+
+local function sincronizarAntiColisao()
+    if CoreGui:GetAttribute("GlobalAntiCollisionActive") then
+        ativarAntiColisao()
+    else
+        desativarAntiColisao()
+    end
+end
+
+CoreGui:GetAttributeChangedSignal("GlobalAntiCollisionActive"):Connect(sincronizarAntiColisao)
+if CoreGui:GetAttribute("GlobalAntiCollisionActive") then task.spawn(sincronizarAntiColisao) end
+
+-- =======================================================================
 -- LÓGICA DO ANTI-LAG BOMB (OTIMIZADA ESTILO BANANA - SEM LOOPS DE TRAVAMENTO)
 -- =======================================================================
 local ItensDaBomba = { ["Bomb"] = true, ["NukeBomb1"] = true, ["NukeBomb2"] = true, ["sire1"] = true, ["Fire"] = true }
@@ -79,9 +130,7 @@ local function neutralizarBomba(objeto)
 
     local nome, classe = objeto.Name, objeto.ClassName
 
-    -- Abordagem Baseada em Eventos Nativo: Deleta o TouchInterest ou silencia elementos sem loops contínuos
     if ItensDaBomba[nome] or ClassesDoLag[classe] then
-        -- Se possuir um gatilho de toque/ativação de servidor, destrói instantaneamente (Igual ao da banana)
         local touchInterest = objeto:FindFirstChildOfClass("TouchInterest")
         if touchInterest then touchInterest:Destroy() end
 
@@ -94,7 +143,6 @@ local function neutralizarBomba(objeto)
     end
 end
 
--- Monitoramento puramente passivo e em tempo real (Evita processamento e lag)
 workspace.DescendantAdded:Connect(neutralizarBomba)
 
 local function aplicarAntiLagInicial()
@@ -127,7 +175,7 @@ end
 local function gerenciarClick1e30()
     local ativo = CoreGui:GetAttribute("GlobalClickActive")
     if clickConnection then clickConnection:Disconnect() clickConnection = nil end
-    
+
     if ativo then
         expandirBotoesExistentes(true)
         clickConnection = workspace.DescendantAdded:Connect(function(objeto)
@@ -135,7 +183,7 @@ local function gerenciarClick1e30()
                 objeto.MaxActivationDistance = DISTANCIA_DESPERTADA
             end
         end)
-        
+
         if sethp then
             task.spawn(function()
                 while CoreGui:GetAttribute("GlobalClickActive") do
@@ -156,7 +204,7 @@ CoreGui:GetAttributeChangedSignal("GlobalClickActive"):Connect(gerenciarClick1e3
 if CoreGui:GetAttribute("GlobalClickActive") then task.spawn(gerenciarClick1e30) end
 
 -- =======================================================================
--- CONSTRUÇÃO DA INTERFACE GRÁFICA (OTIMIZADA COM SCROLLING)
+-- CONSTRUÇÃO DA INTERFACE GRÁFICA
 -- =======================================================================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "HumanoidStatusGUI"
@@ -201,9 +249,9 @@ end
 local BtnAntiLag = criarBotaoMenu("BtnAntiLag", CoreGui:GetAttribute("GlobalAntiLagActive") and "Anti Lag (ON)" or "Anti Lag (OFF)", 1, false)
 local BtnAntiSit = criarBotaoMenu("BtnAntiSit", CoreGui:GetAttribute("GlobalAntiSitActive") and "Anti Sit (On)" or "Anti Sit (Off)", 2, false)
 local BtnClick   = criarBotaoMenu("BtnClick", CoreGui:GetAttribute("GlobalClickActive") and "Click 1e30 (ON)" or "Click 1e30 (OFF)", 3, false)
+local BtnAntiCol = criarBotaoMenu("BtnAntiCol", CoreGui:GetAttribute("GlobalAntiCollisionActive") and "Anti Colisão (ON)" or "Anti Colisão (OFF)", 4, false)
 
--- DETALHE MANTIDO: Funções sem código voltam a exibir o visual nativo de bloqueado/desativado
-local BtnAntiCol = criarBotaoMenu("BtnAntiCol", "Anti Colisão", 4, true)
+-- Funções sem código continuam desativadas/bloqueadas
 local BtnNoclip  = criarBotaoMenu("BtnNoclip", "Noclip", 5, true)
 local BtnFreeze  = criarBotaoMenu("BtnFreeze", "Freeze", 6, true)
 
@@ -247,7 +295,6 @@ OpenCloseIcon.InputBegan:Connect(function(input)
         draggingIcon, dragStartPos, startIconPos = true, input.Position, OpenCloseIcon.Position
         local currentTime = tick()
         if (currentTime - lastClickTime) < 0.35 then
-            -- Dois cliques rápidos fecham a UI visual, mantendo os ganchos ativos
             ScreenGui:Destroy() 
             return
         end
@@ -288,6 +335,12 @@ BtnClick.MouseButton1Click:Connect(function()
     local novoEstado = not CoreGui:GetAttribute("GlobalClickActive")
     CoreGui:SetAttribute("GlobalClickActive", novoEstado)
     BtnClick.Text = novoEstado and "Click 1e30 (ON)" or "Click 1e30 (OFF)"
+end)
+
+BtnAntiCol.MouseButton1Click:Connect(function()
+    local novoEstado = not CoreGui:GetAttribute("GlobalAntiCollisionActive")
+    CoreGui:SetAttribute("GlobalAntiCollisionActive", novoEstado)
+    BtnAntiCol.Text = novoEstado and "Anti Colisão (ON)" or "Anti Colisão (OFF)"
 end)
 
 BtnClose.MouseButton1Click:Connect(function() MainFrameBorder.Visible = false end)
