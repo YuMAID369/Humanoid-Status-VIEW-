@@ -246,7 +246,7 @@ local function criarESPParaJogador(player)
         subTxt.TextColor3 = Color3.fromRGB(220, 220, 220)
         subTxt.Font = Enum.Font.SourceSans
         subTxt.TextSize = 12
-        subTxt.Text = "Sub: " .. player.DisplayName
+        subTxt.Text = "DisplayName: " .. player.DisplayName
         subTxt.Parent = container
 
         espCache[player] = {
