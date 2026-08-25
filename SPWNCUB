@@ -1,6 +1,3 @@
--- =======================================================================
--- SPWNCUB V1 STATUS HUMANOID VIEW (UPDATED - SMART FREEZE COM 1S DE DELAY)
--- =======================================================================
 local UserInputService = game:GetService("UserInputService")
 local CoreGui = game:GetService("CoreGui")
 local Players = game:GetService("Players")
@@ -10,7 +7,6 @@ local LocalPlayer = Players.LocalPlayer
 local TEXTURE_AVATAR_ID = "rbxassetid://95756254163657"
 local ICON_BUTTON_ID = "rbxassetid://130801048432319"
 
--- Gerenciamento de persistência global para manter os efeitos ativos em segundo plano
 if not CoreGui:GetAttribute("AntiSitInitialized") then
     CoreGui:SetAttribute("AntiSitInitialized", true)
     CoreGui:SetAttribute("GlobalAntiSitActive", false)
@@ -18,16 +14,33 @@ if not CoreGui:GetAttribute("AntiSitInitialized") then
     CoreGui:SetAttribute("GlobalAntiLagActive", false)
     CoreGui:SetAttribute("GlobalAntiCollisionActive", false)
     CoreGui:SetAttribute("GlobalFreezeActive", false)
+    CoreGui:SetAttribute("GlobalNoclipActive", false)
+    CoreGui:SetAttribute("GlobalESPActive", false)
 end
 
--- Limpa apenas a interface visual antiga se ela já existir
-if CoreGui:FindFirstChild("HumanoidStatusGUI") then 
-    CoreGui.HumanoidStatusGUI:Destroy() 
+-- Limpa interfaces visuais antigas se existirem
+if CoreGui:FindFirstChild("HumanoidStatusGUI") then CoreGui.HumanoidStatusGUI:Destroy() end
+if CoreGui:FindFirstChild("SpwnCubESP_HUD") then CoreGui.SpwnCubESP_HUD:Destroy() end
+
+local function habilitarArrasto(frame)
+    local dragging, dragInput, dragStart, startPos
+    frame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging, dragStart, startPos = true, input.Position, frame.Position
+            input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
+        end
+    end)
+    frame.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then dragInput = input end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - dragStart
+            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
 end
 
--- =======================================================================
--- GERENCIAMENTO DE ESTADOS (ANTI-SIT PERSISTENTE)
--- =======================================================================
 local antiSitConnections = {}
 
 local function resetSitting()
@@ -69,9 +82,230 @@ end)
 
 if CoreGui:GetAttribute("GlobalAntiSitActive") then activateAntiSit() end
 
--- =======================================================================
--- LÓGICA DO SMART FREEZE (COM 1 SEGUNDO DE ESPERA APÓS PARAR)
--- =======================================================================
+RunService.Stepped:Connect(function()
+    if CoreGui:GetAttribute("GlobalNoclipActive") then
+        local char = LocalPlayer.Character
+        if char then
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = false
+                end
+            end
+        end
+    end
+end)
+
+local espCache = {}
+local espHudFrame = nil
+local playerAddedConn = nil
+local playerRemovingConn = nil
+
+local function criarESPHUD()
+    if CoreGui:FindFirstChild("SpwnCubESP_HUD") then return end
+    
+    local hudGui = Instance.new("ScreenGui")
+    hudGui.Name = "SpwnCubESP_HUD"
+    hudGui.ResetOnSpawn = false
+    hudGui.Parent = CoreGui
+    
+    local hud = Instance.new("Frame")
+    hud.Name = "HUD"
+    hud.Size = UDim2.fromOffset(180, 85)
+    hud.Position = UDim2.fromOffset(15, 15)
+    hud.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    hud.BackgroundTransparency = 0.3
+    hud.BorderSizePixel = 0
+    hud.Active = true
+    hud.Parent = hudGui
+
+    habilitarArrasto(hud)
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(255, 255, 255)
+    stroke.Thickness = 1.5
+    stroke.Parent = hud
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 6)
+    corner.Parent = hud
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, -10, 0, 25)
+    title.Position = UDim2.fromOffset(10, 5)
+    title.BackgroundTransparency = 1
+    title.Text = "ESP Locator"
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.Font = Enum.Font.SourceSansBold
+    title.TextSize = 14
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = hud
+
+    local line = Instance.new("Frame")
+    line.Size = UDim2.new(1, 0, 0, 1)
+    line.Position = UDim2.fromOffset(0, 30)
+    line.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    line.BorderSizePixel = 0
+    line.Parent = hud
+
+    local infoLabel = Instance.new("TextLabel")
+    infoLabel.Name = "InfoLabel"
+    infoLabel.Size = UDim2.new(1, -20, 1, -35)
+    infoLabel.Position = UDim2.fromOffset(10, 35)
+    infoLabel.BackgroundTransparency = 1
+    infoLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    infoLabel.Font = Enum.Font.SourceSans
+    infoLabel.TextSize = 13
+    infoLabel.TextXAlignment = Enum.TextXAlignment.Left
+    infoLabel.TextYAlignment = Enum.TextYAlignment.Top
+    infoLabel.RichText = true
+    infoLabel.Parent = hud
+
+    espHudFrame = hudGui
+end
+
+local function removerESPHUD()
+    if espHudFrame then
+        espHudFrame:Destroy()
+        espHudFrame = nil
+    end
+end
+
+local function removerESP(player)
+    if espCache[player] then
+        if espCache[player].Highlight then espCache[player].Highlight:Destroy() end
+        if espCache[player].Billboard then espCache[player].Billboard:Destroy() end
+        if espCache[player].CharConn then espCache[player].CharConn:Disconnect() end
+        espCache[player] = nil
+    end
+end
+
+local function criarESPParaJogador(player)
+    if player == LocalPlayer then return end
+    removerESP(player)
+
+    local function aplicar(char)
+        if not char then return end
+        local root = char:WaitForChild("HumanoidRootPart", 5)
+        local head = char:WaitForChild("Head", 5)
+        if not root or not head then return end
+
+        local highlight = Instance.new("Highlight")
+        highlight.Name = "SpwnCubHighlight"
+        highlight.FillTransparency = 1
+        highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+        highlight.OutlineTransparency = 0
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        highlight.Adornee = char
+        highlight.Parent = char
+
+        local bb = Instance.new("BillboardGui")
+        bb.Name = "SpwnCubTag"
+        bb.Adornee = head
+        bb.Size = UDim2.fromOffset(160, 60)
+        bb.StudsOffset = Vector3.new(0, 3, 0)
+        bb.AlwaysOnTop = true
+        bb.Parent = char
+
+        local container = Instance.new("Frame")
+        container.Size = UDim2.new(1, 0, 0, 38)
+        container.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+        container.BackgroundTransparency = 0.2
+        container.BorderSizePixel = 0
+        container.Parent = bb
+
+        local uicorner = Instance.new("UICorner")
+        uicorner.CornerRadius = UDim.new(0, 5)
+        uicorner.Parent = container
+
+        local uistroke = Instance.new("UIStroke")
+        uistroke.Color = Color3.fromRGB(255, 255, 255)
+        uistroke.Thickness = 1.5
+        uistroke.Parent = container
+
+        local stem = Instance.new("Frame")
+        stem.Size = UDim2.new(0, 2, 0, 25)
+        stem.Position = UDim2.new(0.5, -1, 1, 0)
+        stem.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        stem.BorderSizePixel = 0
+        stem.Parent = container
+
+        local mainTxt = Instance.new("TextLabel")
+        mainTxt.Size = UDim2.new(1, 0, 0, 20)
+        mainTxt.Position = UDim2.fromOffset(0, 2)
+        mainTxt.BackgroundTransparency = 1
+        mainTxt.TextColor3 = Color3.fromRGB(255, 255, 255)
+        mainTxt.Font = Enum.Font.SourceSansBold
+        mainTxt.TextSize = 13
+        mainTxt.Text = string.upper(player.Name) .. " • 0 STUDS"
+        mainTxt.Parent = container
+
+        local subTxt = Instance.new("TextLabel")
+        subTxt.Size = UDim2.new(1, 0, 0, 16)
+        subTxt.Position = UDim2.fromOffset(0, 18)
+        subTxt.BackgroundTransparency = 1
+        subTxt.TextColor3 = Color3.fromRGB(220, 220, 220)
+        subTxt.Font = Enum.Font.SourceSans
+        subTxt.TextSize = 12
+        subTxt.Text = "Sub: " .. player.DisplayName
+        subTxt.Parent = container
+
+        espCache[player] = {
+            Highlight = highlight,
+            Billboard = bb,
+            MainText = mainTxt,
+            Root = root,
+            CharConn = player.CharacterAdded:Connect(aplicar)
+        }
+    end
+
+    if player.Character then aplicar(player.Character) end
+end
+
+RunService.RenderStepped:Connect(function()
+    if not CoreGui:GetAttribute("GlobalESPActive") then return end
+    
+    local myChar = LocalPlayer.Character
+    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    
+    for player, data in pairs(espCache) do
+        if data.Root and data.Root.Parent and myRoot then
+            local dist = math.floor((myRoot.Position - data.Root.Position).Magnitude)
+            data.MainText.Text = string.upper(player.Name) .. " • " .. tostring(dist) .. " STUDS"
+        end
+    end
+
+    if espHudFrame and espHudFrame:FindFirstChild("HUD") then
+        local label = espHudFrame.HUD:FindFirstChild("InfoLabel")
+        if label then
+            local count = #Players:GetPlayers()
+            label.Text = string.format("Players: %d/%d\nESP: ON", count, Players.MaxPlayers)
+        end
+    end
+end)
+
+local function gerenciarEstadoESP()
+    local ativo = CoreGui:GetAttribute("GlobalESPActive")
+    if ativo then
+        criarESPHUD()
+        for _, p in ipairs(Players:GetPlayers()) do
+            criarESPParaJogador(p)
+        end
+        playerAddedConn = Players.PlayerAdded:Connect(criarESPParaJogador)
+        playerRemovingConn = Players.PlayerRemoving:Connect(removerESP)
+    else
+        if playerAddedConn then playerAddedConn:Disconnect() playerAddedConn = nil end
+        if playerRemovingConn then playerRemovingConn:Disconnect() playerRemovingConn = nil end
+        removerESPHUD()
+        for p, _ in pairs(espCache) do
+            removerESP(p)
+        end
+        espCache = {}
+    end
+end
+
+CoreGui:GetAttributeChangedSignal("GlobalESPActive"):Connect(gerenciarEstadoESP)
+if CoreGui:GetAttribute("GlobalESPActive") then task.spawn(gerenciarEstadoESP) end
+
 local idleStartTime = nil
 
 RunService.Heartbeat:Connect(function()
@@ -82,13 +316,9 @@ RunService.Heartbeat:Connect(function()
             local hum = char:FindFirstChildOfClass("Humanoid")
             if rootPart and hum then
                 if hum.MoveDirection.Magnitude > 0 then
-                    -- Se estiver se movendo, destrava na hora e reseta o cronômetro
-                    if rootPart.Anchored then
-                        rootPart.Anchored = false
-                    end
+                    if rootPart.Anchored then rootPart.Anchored = false end
                     idleStartTime = nil
                 else
-                    -- Se parou de se mover, aguarda 1 segundo completo antes de ancorar
                     if not rootPart.Anchored then
                         if idleStartTime == nil then
                             idleStartTime = os.clock()
@@ -113,9 +343,6 @@ CoreGui:GetAttributeChangedSignal("GlobalFreezeActive"):Connect(function()
     end
 end)
 
--- =======================================================================
--- LÓGICA DO ANTI-COLISÃO / ANTI-FLING PERSISTENTE
--- =======================================================================
 local antiCollisionData = {} 
 local antiCollisionConnection = nil
 
@@ -134,9 +361,7 @@ local function desativarAntiColisao()
     end
     for part, originalCanCollide in pairs(antiCollisionData) do
         if part and part.Parent then
-            pcall(function()
-                part.CanCollide = originalCanCollide 
-            end)
+            pcall(function() part.CanCollide = originalCanCollide end)
         end
     end
     antiCollisionData = {}
@@ -144,28 +369,17 @@ end
 
 local function ativarAntiColisao()
     desativarAntiColisao()
-    for _, objeto in ipairs(workspace:GetDescendants()) do
-        processarPartAntiColisao(objeto)
-    end
-    antiCollisionConnection = workspace.DescendantAdded:Connect(function(objeto)
-        processarPartAntiColisao(objeto)
-    end)
+    for _, objeto in ipairs(workspace:GetDescendants()) do processarPartAntiColisao(objeto) end
+    antiCollisionConnection = workspace.DescendantAdded:Connect(function(objeto) processarPartAntiColisao(objeto) end)
 end
 
 local function sincronizarAntiColisao()
-    if CoreGui:GetAttribute("GlobalAntiCollisionActive") then
-        ativarAntiColisao()
-    else
-        desativarAntiColisao()
-    end
+    if CoreGui:GetAttribute("GlobalAntiCollisionActive") then ativarAntiColisao() else desativarAntiColisao() end
 end
 
 CoreGui:GetAttributeChangedSignal("GlobalAntiCollisionActive"):Connect(sincronizarAntiColisao)
 if CoreGui:GetAttribute("GlobalAntiCollisionActive") then task.spawn(sincronizarAntiColisao) end
 
--- =======================================================================
--- LÓGICA DO ANTI-LAG BOMB (OTIMIZADA ESTILO BANANA - SEM LOOPS DE TRAVAMENTO)
--- =======================================================================
 local ItensDaBomba = { ["Bomb"] = true, ["NukeBomb1"] = true, ["NukeBomb2"] = true, ["sire1"] = true, ["Fire"] = true }
 local ClassesDoLag = { ["Sound"] = true, ["ParticleEmitter"] = true, ["Explosion"] = true }
 
@@ -193,18 +407,13 @@ workspace.DescendantAdded:Connect(neutralizarBomba)
 local function aplicarAntiLagInicial()
     if CoreGui:GetAttribute("GlobalAntiLagActive") then
         local descendants = workspace:GetDescendants()
-        for i = 1, #descendants do
-            neutralizarBomba(descendants[i])
-        end
+        for i = 1, #descendants do neutralizarBomba(descendants[i]) end
     end
 end
 
 CoreGui:GetAttributeChangedSignal("GlobalAntiLagActive"):Connect(aplicarAntiLagInicial)
 if CoreGui:GetAttribute("GlobalAntiLagActive") then task.spawn(aplicarAntiLagInicial) end
 
--- =======================================================================
--- LÓGICA DO ALCANCE INFINITO PERSISTENTE (CLICK 1E30)
--- =======================================================================
 local DISTANCIA_DESPERTADA = math.huge
 local clickConnection = nil
 
@@ -229,17 +438,20 @@ local function gerenciarClick1e30()
             end
         end)
 
-        if sethp then
-            task.spawn(function()
-                while CoreGui:GetAttribute("GlobalClickActive") do
-                    pcall(function()
-                        sethp(LocalPlayer, "SimulationRadius", 1e30)
-                        sethp(LocalPlayer, "MaxSimulationRadius", 1e30)
-                    end)
-                    RunService.RenderStepped:Wait()
-                end
-            end)
-        end
+        task.spawn(function()
+            while CoreGui:GetAttribute("GlobalClickActive") do
+                pcall(function()
+                    local setProp = sethiddenproperty or set_hidden_property or sethp
+                    if setProp then
+                        setProp(LocalPlayer, "SimulationRadius", 1e30)
+                        setProp(LocalPlayer, "MaxSimulationRadius", 1e30)
+                    elseif setsimulationradius then
+                        setsimulationradius(1e30)
+                    end
+                end)
+                RunService.RenderStepped:Wait()
+            end
+        end)
     else
         expandirBotoesExistentes(false)
     end
@@ -248,9 +460,6 @@ end
 CoreGui:GetAttributeChangedSignal("GlobalClickActive"):Connect(gerenciarClick1e30)
 if CoreGui:GetAttribute("GlobalClickActive") then task.spawn(gerenciarClick1e30) end
 
--- =======================================================================
--- CONSTRUÇÃO DA INTERFACE GRÁFICA
--- =======================================================================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "HumanoidStatusGUI"
 ScreenGui.ResetOnSpawn = false
@@ -265,21 +474,22 @@ end
 
 local MainFrameBorder = create("Frame", {Name = "MainFrameBorder", Size = UDim2.fromOffset(265, 310), Position = UDim2.new(0.5, -132, 0.5, -155), BackgroundColor3 = Color3.fromRGB(255, 255, 255), BorderSizePixel = 0, Active = true, Parent = ScreenGui})
 local MainFrame = create("Frame", {Name = "MainFrame", Size = UDim2.new(1, -6, 1, -6), Position = UDim2.fromOffset(3, 3), BackgroundColor3 = Color3.fromRGB(0, 0, 0), BorderSizePixel = 0, ZIndex = 2, Parent = MainFrameBorder})
-create("TextLabel", {Name = "TitleLabel", Size = UDim2.new(1, 0, 0, 35), Position = UDim2.fromOffset(0, 8), BackgroundTransparency = 1, Text = "Humanoid Status VIEW", TextColor3 = Color3.fromRGB(255, 255, 255), Font = Enum.Font.SpecialElite, TextSize = 19, ZIndex = 3, Parent = MainFrame})
+
+-- Título mantido conforme solicitado
+create("TextLabel", {Name = "TitleLabel", Size = UDim2.new(1, 0, 0, 35), Position = UDim2.fromOffset(0, 6), BackgroundTransparency = 1, Text = "VIEW STATUS HUMANOID", TextColor3 = Color3.fromRGB(255, 255, 255), Font = Enum.Font.Arcade, TextSize = 22, ZIndex = 3, Parent = MainFrame})
+
 create("ImageLabel", {Name = "AvatarImage", Size = UDim2.fromOffset(105, 175), Position = UDim2.fromOffset(140, 55), BackgroundTransparency = 1, Image = TEXTURE_AVATAR_ID, ZIndex = 3, Parent = MainFrame})
 
--- Divisório Lateral/Sistema de Rolamento usando a linha branca nativa (ScrollBar)
 local ScrollContainer = create("ScrollingFrame", {
     Name = "ScrollContainer", Size = UDim2.fromOffset(125, 175), Position = UDim2.fromOffset(8, 55),
     BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
-    ScrollBarImageColor3 = Color3.fromRGB(255, 255, 255), CanvasSize = UDim2.new(0, 0, 0, 220), 
+    ScrollBarImageColor3 = Color3.fromRGB(255, 255, 255), CanvasSize = UDim2.new(0, 0, 0, 260), 
     ZIndex = 3, Parent = MainFrame
 })
 
 local ButtonContainer = create("Frame", {Name = "ButtonContainer", Size = UDim2.new(1, -8, 1, 0), Position = UDim2.fromOffset(0, 0), BackgroundTransparency = 1, ZIndex = 3, Parent = ScrollContainer})
 create("UIListLayout", {Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = ButtonContainer})
 
--- Função para criar botões com suporte ao visual adaptativo de bloqueado
 local function criarBotaoMenu(nome, texto, ordem, bloqueado)
     local btn = create("TextButton", {
         Name = nome, Size = UDim2.new(1, 0, 0, 30), BorderSizePixel = 0, Text = texto, Font = Enum.Font.SourceSansBold, TextSize = 14, LayoutOrder = ordem, ZIndex = 4,
@@ -290,49 +500,22 @@ local function criarBotaoMenu(nome, texto, ordem, bloqueado)
     return btn
 end
 
--- Botões Atualizados e Sincronizados com Atributos Globais
 local BtnAntiLag = criarBotaoMenu("BtnAntiLag", CoreGui:GetAttribute("GlobalAntiLagActive") and "Anti Lag (ON)" or "Anti Lag (OFF)", 1, false)
 local BtnAntiSit = criarBotaoMenu("BtnAntiSit", CoreGui:GetAttribute("GlobalAntiSitActive") and "Anti Sit (On)" or "Anti Sit (Off)", 2, false)
 local BtnClick   = criarBotaoMenu("BtnClick", CoreGui:GetAttribute("GlobalClickActive") and "Click 1e30 (ON)" or "Click 1e30 (OFF)", 3, false)
 local BtnAntiCol = criarBotaoMenu("BtnAntiCol", CoreGui:GetAttribute("GlobalAntiCollisionActive") and "Anti Colisão (ON)" or "Anti Colisão (OFF)", 4, false)
 local BtnFreeze  = criarBotaoMenu("BtnFreeze", CoreGui:GetAttribute("GlobalFreezeActive") and "Freeze (ON)" or "Freeze (OFF)", 5, false)
-
--- Função remanescente bloqueada
-local BtnNoclip  = criarBotaoMenu("BtnNoclip", "Noclip", 6, true)
+local BtnNoclip  = criarBotaoMenu("BtnNoclip", CoreGui:GetAttribute("GlobalNoclipActive") and "Noclip (ON)" or "Noclip (OFF)", 6, false)
+local BtnESP     = criarBotaoMenu("BtnESP", CoreGui:GetAttribute("GlobalESPActive") and "ESP (ON)" or "ESP (OFF)", 7, false)
 
 local BottomBar = create("Frame", {Name = "BottomBar", Size = UDim2.new(1, 0, 0, 55), Position = UDim2.new(0, 0, 1, -55), BackgroundColor3 = Color3.fromRGB(20, 20, 20), BorderSizePixel = 0, ZIndex = 3, Parent = MainFrame})
-local BtnClose = create("TextButton", {Name = "BtnClose", Size = UDim2.fromOffset(130, 30), Position = UDim2.new(0.5, -65, 0.5, -15), BackgroundColor3 = Color3.fromRGB(38, 38, 38), BorderSizePixel = 0, Text = "Close", TextColor3 = Color3.fromRGB(255, 255, 255), Font = Enum.Font.SourceSansBold, TextSize = 18, ZIndex = 4, Parent = BottomBar})
+local BtnClose = create("TextButton", {Name = "BtnClose", Size = UDim2.fromOffset(130, 30), Position = UDim2.new(0.5, -65, 0.5, -15), BackgroundColor3 = Color3.fromRGB(38, 38, 38), BorderSizePixel = 0, Text = "Close", TextColor3 = Color3.fromRGB(255, 255, 255), Font = Enum.Font.SourceSansBold, TextSize = 15, ZIndex = 4, Parent = BottomBar})
 create("UICorner", {CornerRadius = UDim.new(0, 5), Parent = BtnClose})
 
 local OpenCloseIcon = create("ImageButton", {Name = "OpenCloseIcon", Size = UDim2.fromOffset(70, 70), Position = UDim2.fromOffset(125, 4), BackgroundTransparency = 1, BorderSizePixel = 0, Image = ICON_BUTTON_ID, ZIndex = 12, Active = true, Parent = ScreenGui})
 
--- =======================================================================
--- FUNÇÃO AUXILIAR DE ARRASTE (DRAG) UNIFICADA
--- =======================================================================
-local function habilitarArrasto(frame)
-    local dragging, dragInput, dragStart, startPos
-    frame.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging, dragStart, startPos = true, input.Position, frame.Position
-            input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
-        end
-    end)
-    frame.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then dragInput = input end
-    end)
-    UserInputService.InputChanged:Connect(function(input)
-        if input == dragInput and dragging then
-            local delta = input.Position - dragStart
-            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-        end
-    end)
-end
-
 habilitarArrasto(MainFrameBorder)
 
--- =======================================================================
--- SISTEMA DO BOTÃO NINJA (ABRIR, FECHAR E SELEÇÃO)
--- =======================================================================
 local draggingIcon, dragStartPos, startIconPos, lastClickTime = false, nil, nil, 0
 
 OpenCloseIcon.InputBegan:Connect(function(input)
@@ -341,6 +524,7 @@ OpenCloseIcon.InputBegan:Connect(function(input)
         local currentTime = tick()
         if (currentTime - lastClickTime) < 0.35 then
             ScreenGui:Destroy() 
+            removerESPHUD()
             return
         end
         lastClickTime = currentTime
@@ -361,9 +545,6 @@ OpenCloseIcon.InputEnded:Connect(function(input)
     end
 end)
 
--- =======================================================================
--- LÓGICA DE INTERAÇÃO DOS BOTÕES ATIVOS
--- =======================================================================
 BtnAntiLag.MouseButton1Click:Connect(function()
     local novoEstado = not CoreGui:GetAttribute("GlobalAntiLagActive")
     CoreGui:SetAttribute("GlobalAntiLagActive", novoEstado)
@@ -392,6 +573,18 @@ BtnFreeze.MouseButton1Click:Connect(function()
     local novoEstado = not CoreGui:GetAttribute("GlobalFreezeActive")
     CoreGui:SetAttribute("GlobalFreezeActive", novoEstado)
     BtnFreeze.Text = novoEstado and "Freeze (ON)" or "Freeze (OFF)"
+end)
+
+BtnNoclip.MouseButton1Click:Connect(function()
+    local novoEstado = not CoreGui:GetAttribute("GlobalNoclipActive")
+    CoreGui:SetAttribute("GlobalNoclipActive", novoEstado)
+    BtnNoclip.Text = novoEstado and "Noclip (ON)" or "Noclip (OFF)"
+end)
+
+BtnESP.MouseButton1Click:Connect(function()
+    local novoEstado = not CoreGui:GetAttribute("GlobalESPActive")
+    CoreGui:SetAttribute("GlobalESPActive", novoEstado)
+    BtnESP.Text = novoEstado and "ESP (ON)" or "ESP (OFF)"
 end)
 
 BtnClose.MouseButton1Click:Connect(function() MainFrameBorder.Visible = false end)
